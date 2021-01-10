@@ -1,0 +1,78 @@
+
+master 上查看node状态，始终是Not Ready，不能继续往下走了。后面是具体查看到的内容：
+
+[root@k8s-6-221 YAML]# kubectl get node
+NAME            STATUS     ROLES    AGE     VERSION
+192.168.6.224   NotReady   <none>   3m15s   v1.16.0
+192.168.6.225   NotReady   <none>   3m15s   v1.16.0
+
+
+node节点，查看docker ps -a 
+[root@node-6-224 cfg]# docker ps -a,  k8s_install-cni_kube-flannel-ds-amd64-cj4k2_kube-system 容器为 Exited状态
+----------------------------------------------
+CONTAINER ID   IMAGE                         COMMAND                  CREATED         STATUS                     PORTS     NAMES
+4daa46361423   ff281650a721                  "/opt/bin/flanneld -…"   6 minutes ago   Up 6 minutes                         k8s_kube-flannel_kube-flannel-ds-amd64-cj4k2_kube-system_43189ce0-e146-4452-aff6-bbd66564eef7_0
+c21e0bde3830   ff281650a721                  "cp -f /etc/kube-fla…"   6 minutes ago   Exited (0) 6 minutes ago             k8s_install-cni_kube-flannel-ds-amd64-cj4k2_kube-system_43189ce0-e146-4452-aff6-bbd66564eef7_0
+efbbb6b1625f   lizhenliang/pause-amd64:3.0   "/pause"                 6 minutes ago   Up 6 minutes                         k8s_POD_kube-flannel-ds-amd64-cj4k2_kube-system_43189ce0-e146-4452-aff6-bbd66564eef7_0
+----------------------------------------------------------------
+
+配置了变量
+master1="192.168.6.221"
+node1="192.168.6.224"
+node2="192.168.6.225"
+
+
+1.	etcd 正常
+2.	kube-scheduler 正常
+3.	kube-apiserver 服务启动，但是logs/kube-apiserver.INFO 报
+healthz check failed
+I0110 19:20:33.965833    8539 controller.go:606] quota admission added evaluator for: endpoints
+I0110 19:23:02.319243    8539 controller.go:606] quota admission added evaluator for: leases.coordination.k8s.io
+E0110 19:36:06.267593    8539 watcher.go:214] watch chan error: etcdserver: mvcc: required revision has been compacted
+4.	kube-controller-manager 服务启动，INFO没有报特别的异常
+5.	通过命令 kubectl get cs
+NAME                 AGE
+scheduler            <unknown>
+controller-manager   <unknown>
+etcd-2               <unknown>
+etcd-0               <unknown>
+etcd-1               <unknown>
+6.	在kubectl get cs 看到etcd的状态是 unknown，但是在用etcd检查命令是对的。
+[root@k8s-6-221 YAML]# /opt/etcd/bin/etcdctl \
+>  --ca-file=/opt/etcd/ssl/ca.pem --cert-file=/opt/etcd/ssl/server.pem --key-file=/opt/etcd/ssl/server-key.pem \
+>  --endpoints="https://$etcd1:2379,https://$etcd2:2379,https://$etcd3:2379" \
+>  cluster-health
+member 15a1bcda80b04a72 is healthy: got healthy result from https://192.168.6.225:2379
+member 376312f94dc8c263 is healthy: got healthy result from https://192.168.6.224:2379
+member 79822c868b6ad2f3 is healthy: got healthy result from https://192.168.6.221:2379
+cluster is healthy
+[root@k8s-6-221 YAML]#  ETCDCTL_API=3 /opt/etcd/bin/etcdctl --cacert=/opt/etcd/ssl/ca.pem --cert=/opt/etcd/ssl/server.pem --key=/opt/etcd/ssl/server-key.pem --endpoints="https://$etcd1:2379,https://$etcd2:2379,https://$etcd3:2379" endpoint health
+https://192.168.6.221:2379 is healthy: successfully committed proposal: took = 11.66443ms
+https://192.168.6.225:2379 is healthy: successfully committed proposal: took = 8.854736ms
+https://192.168.6.224:2379 is healthy: successfully committed proposal: took = 14.62421ms
+
+7.	node节点，kubelet服务启动，但是INFO日志报错误
+W0110 22:47:05.752585    7084 cni.go:202] Error validating CNI config &{cbr0 0.2.0 false [0xc0001a8560 0xc0001a86a0] [123 10 32 32 34 99 110 105 86 101 114 115 105 111 110 34 58 32 34 48 46 50 46 48 34 44 10 32 32 34 110 97 109 101 34 58 32 34 99 98 114 48 34 44 10 32 32 34 112 108 117 103 105 110 115 34 58 32 91 10 32 32 32 32 123 10 32 32 32 32 32 32 34 116 121 112 101 34 58 32 34 102 108 97 110 110 101 108 34 44 10 32 32 32 32 32 32 34 100 101 108 101 103 97 116 101 34 58 32 123 10 32 32 32 32 32 32 32 32 34 104 97 105 114 112 105 110 77 111 100 101 34 58 32 116 114 117 101 44 10 32 32 32 32 32 32 32 32 34 105 115 68 101 102 97 117 108 116 71 97 116 101 119 97 121 34 58 32 116 114 117 101 10 32 32 32 32 32 32 125 10 32 32 32 32 125 44 10 32 32 32 32 123 10 32 32 32 32 32 32 34 116 121 112 101 34 58 32 34 112 111 114 116 109 97 112 34 44 10 32 32 32 32 32 32 34 99 97 112 97 98 105 108 105 116 105 101 115 34 58 32 123 10 32 32 32 32 32 32 32 32 34 112 111 114 116 77 97 112 112 105 110 103 115 34 58 32 116 114 117 101 10 32 32 32 32 32 32 125 10 32 32 32 32 125 10 32 32 93 10 125 10]}: [fork/exec /opt/cni/bin/flannel: permission denied fork/exec /opt/cni/bin/portmap: permission denied]
+W0110 22:47:05.752817    7084 cni.go:177] Error loading CNI config file /etc/cni/net.d/kubelet.conf: error parsing configuration: invalid character '-' in numeric literal
+W0110 22:47:05.752973    7084 cni.go:237] Unable to update cni config: no valid networks found in /etc/cni/net.d
+E0110 22:47:05.936126    7084 kubelet.go:2187] Container runtime network not ready: NetworkReady=false reason:NetworkPluginNotReady message:docker: network plugin is not ready: cni config uninitialized
+
+8.	node节点，kube-proxy 服务启动，但是INFO日志报一个错误，
+I0110 22:40:56.973192    7183 service.go:357] Adding new service port "default/kubernetes:https" at 10.0.0.1:443/TCP
+I0110 22:40:57.072697    7183 proxier.go:1729] Not using `--random-fully` in the MASQUERADE rule for iptables because the local version of iptables does not support it
+
+9.	node节点，查看docker ps -a
+[root@node-6-224 cfg]# docker ps -a,  k8s_install-cni_kube-flannel-ds-amd64-cj4k2_kube-system 容器为 Exited状态
+----------------------------------------------
+CONTAINER ID   IMAGE                         COMMAND                  CREATED         STATUS                     PORTS     NAMES
+4daa46361423   ff281650a721                  "/opt/bin/flanneld -…"   6 minutes ago   Up 6 minutes                         k8s_kube-flannel_kube-flannel-ds-amd64-cj4k2_kube-system_43189ce0-e146-4452-aff6-bbd66564eef7_0
+c21e0bde3830   ff281650a721                  "cp -f /etc/kube-fla…"   6 minutes ago   Exited (0) 6 minutes ago             k8s_install-cni_kube-flannel-ds-amd64-cj4k2_kube-system_43189ce0-e146-4452-aff6-bbd66564eef7_0
+efbbb6b1625f   lizhenliang/pause-amd64:3.0   "/pause"                 6 minutes ago   Up 6 minutes                         k8s_POD_kube-flannel-ds-amd64-cj4k2_kube-system_43189ce0-e146-4452-aff6-bbd66564eef7_0
+----------------------------------------------------------------
+
+[root@k8s-6-221 YAML]# kubectl get node
+NAME            STATUS     ROLES    AGE     VERSION
+192.168.6.224   NotReady   <none>   3m15s   v1.16.0
+192.168.6.225   NotReady   <none>   3m15s   v1.16.0
+
+
